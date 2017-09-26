@@ -665,6 +665,7 @@ def attention_decoder(decoder_inputs,
     def attention(query):
       """Put attention masks on hidden using hidden_features and query."""
       ds = []  # Results of attention reads will be stored here.
+      logits = []
       if nest.is_sequence(query):  # If the query is a tuple, flatten it.
         query_list = nest.flatten(query)
         for q in query_list:  # Check that ndims == 2 if specified.
@@ -684,9 +685,11 @@ def attention_decoder(decoder_inputs,
           d = math_ops.reduce_sum(
               array_ops.reshape(a, [-1, attn_length, 1, 1]) * hidden, [1, 2])
           ds.append(array_ops.reshape(d, [-1, attn_size]))
-      return ds, a
+          logits.append(a)
+      return ds, logits
 
     outputs = []
+    outputs_logits = []
     prev = None
     batch_attn_size = array_ops.stack([batch_size, attn_size])
     attns = [
@@ -709,7 +712,7 @@ def attention_decoder(decoder_inputs,
       if input_size.value is None:
         raise ValueError("Could not infer input size from input: %s" % inp.name)
       #x = linear([inp] + attns, input_size, True)
-      x = [inp]
+      x = inp
       # Run the RNN.
       cell_output, state = cell(x, state)
       # Run the attention mechanism.
@@ -720,13 +723,14 @@ def attention_decoder(decoder_inputs,
       else:
         attns, attns_logit = attention(state)
 
-      with variable_scope.variable_scope("AttnOutputProjection"):
-        output = linear([cell_output] + attns, output_size, True)
+      #with variable_scope.variable_scope("AttnOutputProjection"):
+        #output = linear([cell_output] + attns, output_size, True)
       if loop_function is not None:
-        prev = zip(output, attns_logit)
-      outputs.append(zip(output, attns_logit))
+        prev = [cell_output, attns_logit]
+      outputs.append(cell_output)
+      outputs_logits.append(attns_logit)
 
-  return outputs, state
+  return outputs, outputs_logits, state
 
 
 def embedding_attention_decoder(decoder_inputs,
@@ -1228,24 +1232,28 @@ def model_with_buckets(encoder_inputs,
   all_inputs = encoder_inputs + decoder_inputs + targets + weights
   losses = []
   outputs = []
+  output_logits = []
   with ops.name_scope(name, "model_with_buckets", all_inputs):
     for j, bucket in enumerate(buckets):
       with variable_scope.variable_scope(
           variable_scope.get_variable_scope(), reuse=True if j > 0 else None):
-        bucket_outputs, _ = seq2seq(encoder_inputs[:bucket[0]],
+        bucket_outputs, bucket_output_logits, _ = seq2seq(encoder_inputs[:bucket[0]],
                                     decoder_inputs[:bucket[1]])
         outputs.append(bucket_outputs)
+        output_logits.append(bucket_output_logits)
         if per_example_loss:
           losses.append(
               sequence_loss_by_example(
-                  outputs[-1][1],
+                  #outputs[-1],
+                  output_logits[-1],
                   targets[:bucket[1]],
                   weights[:bucket[1]],
                   softmax_loss_function=softmax_loss_function))
         else:
           losses.append(
               sequence_loss(
-                  outputs[-1][1],
+                  #outputs[-1],
+                  output_logits[-1],
                   targets[:bucket[1]],
                   weights[:bucket[1]],
                   softmax_loss_function=softmax_loss_function))

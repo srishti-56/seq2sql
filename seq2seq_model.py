@@ -26,6 +26,7 @@ from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
 
 import data_utils
+import seq2seq_custom
 
 
 class Seq2SeqModel(object):
@@ -98,7 +99,7 @@ class Seq2SeqModel(object):
       w_t = tf.get_variable("proj_w", [self.target_vocab_size, size], dtype=dtype)
       w = tf.transpose(w_t)
       b = tf.get_variable("proj_b", [self.target_vocab_size], dtype=dtype)
-      output_projection = (w, b)
+      #output_projection = (w, b)
 
       def sampled_loss(labels, logits):
         labels = tf.reshape(labels, [-1, 1])
@@ -116,7 +117,7 @@ class Seq2SeqModel(object):
                 num_sampled=num_samples,
                 num_classes=self.target_vocab_size),
             dtype)
-      softmax_loss_function = sampled_loss
+      #softmax_loss_function = sampled_loss
 
     # Create the internal multi-layer cell for our RNN.
     def single_cell():
@@ -132,7 +133,8 @@ class Seq2SeqModel(object):
 
     # The seq2seq function: we use embedding for the input and attention.
     def seq2seq_f(encoder_inputs, decoder_inputs, do_decode):
-      return tf.contrib.legacy_seq2seq.embedding_attention_seq2seq(
+      #return tf.contrib.legacy_seq2seq.embedding_attention_seq2seq(
+      return seq2seq_custom.embedding_attention_seq2seq(
           encoder_inputs,
           decoder_inputs,
           mycell(),
@@ -162,7 +164,8 @@ class Seq2SeqModel(object):
 
     # Training outputs and losses.
     if forward_only:
-      self.outputs, self.losses = tf.contrib.legacy_seq2seq.model_with_buckets(
+      #self.outputs, self.losses = tf.contrib.legacy_seq2seq.model_with_buckets(
+      self.outputs, self.losses = seq2seq_custom.model_with_buckets(
           self.encoder_inputs, self.decoder_inputs, targets,
           self.target_weights, buckets, lambda x, y: seq2seq_f(x, y, True),
           softmax_loss_function=softmax_loss_function)
@@ -174,7 +177,8 @@ class Seq2SeqModel(object):
               for output in self.outputs[b]
           ]
     else:
-      self.outputs, self.losses = tf.contrib.legacy_seq2seq.model_with_buckets(
+      #self.outputs, self.losses = tf.contrib.legacy_seq2seq.model_with_buckets(
+      self.outputs, self.losses = seq2seq_custom.model_with_buckets(
           self.encoder_inputs, self.decoder_inputs, targets,
           self.target_weights, buckets,
           lambda x, y: seq2seq_f(x, y, False),
