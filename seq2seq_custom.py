@@ -727,8 +727,10 @@ def attention_decoder(decoder_inputs,
         #output = linear([cell_output] + attns, output_size, True)
       if loop_function is not None:
         prev = [cell_output, attns_logit]
+      #m = cell_output.get_shape()
+      #n = attns_logit[0].get_shape()
       outputs.append(cell_output)
-      outputs_logits.append(attns_logit)
+      outputs_logits.append(attns_logit[0])
 
   return outputs, outputs_logits, state
 
