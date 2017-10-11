@@ -37,6 +37,7 @@ import random
 import sys
 import time
 import logging
+import ipdb
 
 import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
@@ -45,7 +46,7 @@ import tensorflow as tf
 import data_utils
 import seq2seq_model
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2,4"
 
 tf.app.flags.DEFINE_float("learning_rate", 0.5, "Learning rate.")
 tf.app.flags.DEFINE_float("learning_rate_decay_factor", 0.99,
@@ -66,7 +67,7 @@ tf.app.flags.DEFINE_string("from_dev_data", None, "Training data.")
 tf.app.flags.DEFINE_string("to_dev_data", None, "Training data.")
 tf.app.flags.DEFINE_integer("max_train_data_size", 0,
                             "Limit on the size of training data (0: no limit).")
-tf.app.flags.DEFINE_integer("steps_per_checkpoint", 2000,
+tf.app.flags.DEFINE_integer("steps_per_checkpoint", 100,
                             "How many training steps to do per checkpoint.")
 tf.app.flags.DEFINE_boolean("decode", False,
                             "Set to True for interactive decoding.")
@@ -169,6 +170,10 @@ def train():
         to_dev_data,
         FLAGS.from_vocab_size,
         FLAGS.to_vocab_size)
+
+    en_vocab_path = os.path.join(FLAGS.data_dir,
+                                 "vocab%d.from" % FLAGS.from_vocab_size)
+    _, rev_fr_vocab = data_utils.initialize_vocabulary(en_vocab_path)
   else:
       # Prepare WMT data.
       print("Preparing WMT data in %s" % FLAGS.data_dir)
@@ -231,17 +236,37 @@ def train():
         model.saver.save(sess, checkpoint_path, global_step=model.global_step)
         step_time, loss = 0.0, 0.0
         # Run evals on development set and print their perplexity.
+        print("run evals")
+        ft = open('tmp.eval','w')
         for bucket_id in xrange(len(_buckets)):
           if len(dev_set[bucket_id]) == 0:
             print("  eval: empty bucket %d" % (bucket_id))
             continue
-          encoder_inputs, decoder_inputs, target_weights = model.get_batch(
+          all_encoder_inputs, all_decoder_inputs, all_target_weights = model.get_all_batch(
               dev_set, bucket_id)
-          _, eval_loss, _ = model.step(sess, encoder_inputs, decoder_inputs,
-                                       target_weights, bucket_id, True)
-          eval_ppx = math.exp(float(eval_loss)) if eval_loss < 300 else float(
-              "inf")
-          print("  eval: bucket %d perplexity %.2f" % (bucket_id, eval_ppx))
+          ipdb.set_trace()
+          for idx in xrange(len(all_encoder_inputs)):
+            _, eval_loss, output_logits = model.step(sess, all_encoder_inputs[idx], all_decoder_inputs[idx],
+                                         all_target_weights[idx], bucket_id, True)
+            #eval_ppx = math.exp(float(eval_loss)) if eval_loss < 300 else float(
+            #    "inf")
+            #print("  eval: bucket %d perplexity %.2f" % (bucket_id, eval_ppx))
+            #ipdb.set_trace()
+            #print(output_logits)
+            outputs = [np.argmax(logit, axis=1) for logit in output_logits]
+            out_ids = []
+            for idx in xrange(len(outputs)):
+              out_ids.append(encoder_inputs[idx][outputs[idx]])
+            t = np.array(out_ids)
+            t = t.swapaxes(0,1)
+            t = t.tolist()
+            #if data_utils.EOS_ID in outputs:
+            #  t = [m[:m.index(data_utils.EOS_ID)] for m in t] 
+            for m in t:
+              #print(" ".join([tf.compat.as_str(rev_fr_vocab[o]) for o in m]))
+              ft.write(" ".join([tf.compat.as_str(rev_fr_vocab[o]) for o in m]) + '\n')
+        ft.close()
+        print("finish evals")
         sys.stdout.flush()
 
 

@@ -1260,4 +1260,4 @@ def model_with_buckets(encoder_inputs,
                   weights[:bucket[1]],
                   softmax_loss_function=softmax_loss_function))
 
-  return outputs, losses
+  return output_logits, losses
