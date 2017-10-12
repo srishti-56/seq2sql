@@ -37,7 +37,7 @@ import random
 import sys
 import time
 import logging
-import ipdb
+#import ipdb
 
 import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
@@ -67,7 +67,7 @@ tf.app.flags.DEFINE_string("from_dev_data", None, "Training data.")
 tf.app.flags.DEFINE_string("to_dev_data", None, "Training data.")
 tf.app.flags.DEFINE_integer("max_train_data_size", 0,
                             "Limit on the size of training data (0: no limit).")
-tf.app.flags.DEFINE_integer("steps_per_checkpoint", 100,
+tf.app.flags.DEFINE_integer("steps_per_checkpoint", 2000,
                             "How many training steps to do per checkpoint.")
 tf.app.flags.DEFINE_boolean("decode", False,
                             "Set to True for interactive decoding.")
@@ -244,7 +244,7 @@ def train():
             continue
           all_encoder_inputs, all_decoder_inputs, all_target_weights = model.get_all_batch(
               dev_set, bucket_id)
-          ipdb.set_trace()
+          #ipdb.set_trace()
           for idx in xrange(len(all_encoder_inputs)):
             _, eval_loss, output_logits = model.step(sess, all_encoder_inputs[idx], all_decoder_inputs[idx],
                                          all_target_weights[idx], bucket_id, True)
@@ -252,19 +252,22 @@ def train():
             #    "inf")
             #print("  eval: bucket %d perplexity %.2f" % (bucket_id, eval_ppx))
             #ipdb.set_trace()
-            #print(output_logits)
+            swap_inputs = np.array(all_encoder_inputs[idx])
+            swap_inputs = swap_inputs.swapaxes(0,1) 
+
             outputs = [np.argmax(logit, axis=1) for logit in output_logits]
+            swap_outputs = np.array(outputs)
+            swap_outputs = swap_outputs.swapaxes(0,1) 
+
             out_ids = []
-            for idx in xrange(len(outputs)):
-              out_ids.append(encoder_inputs[idx][outputs[idx]])
-            t = np.array(out_ids)
-            t = t.swapaxes(0,1)
-            t = t.tolist()
+            for batch_id in xrange(len(swap_outputs)):
+              out_ids.append(swap_inputs[batch_id][swap_outputs[batch_id]])
             #if data_utils.EOS_ID in outputs:
             #  t = [m[:m.index(data_utils.EOS_ID)] for m in t] 
-            for m in t:
+            
+            for m in out_ids:
               #print(" ".join([tf.compat.as_str(rev_fr_vocab[o]) for o in m]))
-              ft.write(" ".join([tf.compat.as_str(rev_fr_vocab[o]) for o in m]) + '\n')
+              ft.write(" ".join([tf.compat.as_str(rev_fr_vocab[o]) for o in m.tolist()]) + '\n')
         ft.close()
         print("finish evals")
         sys.stdout.flush()
