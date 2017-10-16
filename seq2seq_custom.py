@@ -108,7 +108,7 @@ def _extract_argmax_and_embed(embedding,
 
   return loop_function
 
-def _copy_loop(embedding,
+def _copy_loop(embedding, encoder_inputs,
                               output_projection=None,
                               update_embedding=True):
   """Get a loop_function that copy.
@@ -127,7 +127,11 @@ def _copy_loop(embedding,
   def loop_function(prev, _):
     #if output_projection is not None:
     #  prev = nn_ops.xw_plus_b(prev, output_projection[0], output_projection[1])
-    prev_symbol = math_ops.argmax(prev[1], 1) #zip(output, logits)
+    prev_position = math_ops.argmax(prev[1], 1) #zip(output, logits)
+
+    second_indices = array_ops.range(array_ops.shape(prev_symbol)[0])
+    nd_index = array_ops.stack([prev_position, second_indices], axis=1) 
+    prev_symbol = array_ops.gather_nd(encoder_inputs, nd_index)
     # Note that gradients will not propagate through the second parameter of
     # embedding_lookup.
     emb_prev = embedding_ops.embedding_lookup(embedding, prev_symbol)
@@ -685,7 +689,7 @@ def attention_decoder(decoder_inputs,
           d = math_ops.reduce_sum(
               array_ops.reshape(a, [-1, attn_length, 1, 1]) * hidden, [1, 2])
           ds.append(array_ops.reshape(d, [-1, attn_size]))
-          logits.append(a)
+          logits.append(s)
       return ds, logits
 
     outputs = []
@@ -736,6 +740,7 @@ def attention_decoder(decoder_inputs,
 
 
 def embedding_attention_decoder(decoder_inputs,
+                                encoder_inputs,
                                 initial_state,
                                 attention_states,
                                 cell,
@@ -804,8 +809,9 @@ def embedding_attention_decoder(decoder_inputs,
 
     embedding = variable_scope.get_variable("embedding",
                                             [num_symbols, embedding_size])
+    encoder_tensor = array_ops.stack(encoder_inputs, axis=0)
     loop_function = _copy_loop(
-        embedding, output_projection,
+        embedding, encoder_tensor, output_projection,
         update_embedding_for_previous) if feed_previous else None
     emb_inp = [
         embedding_ops.embedding_lookup(embedding, i) for i in decoder_inputs
@@ -904,6 +910,7 @@ def embedding_attention_seq2seq(encoder_inputs,
     if isinstance(feed_previous, bool):
       return embedding_attention_decoder(
           decoder_inputs,
+          encoder_inputs,
           encoder_state,
           attention_states,
           cell,
@@ -922,6 +929,7 @@ def embedding_attention_seq2seq(encoder_inputs,
           variable_scope.get_variable_scope(), reuse=reuse):
         outputs, state = embedding_attention_decoder(
             decoder_inputs,
+            encoder_inputs,
             encoder_state,
             attention_states,
             cell,

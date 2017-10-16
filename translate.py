@@ -46,7 +46,7 @@ import tensorflow as tf
 import data_utils
 import seq2seq_model
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "2,4"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
 
 tf.app.flags.DEFINE_float("learning_rate", 0.5, "Learning rate.")
 tf.app.flags.DEFINE_float("learning_rate_decay_factor", 0.99,
@@ -55,7 +55,7 @@ tf.app.flags.DEFINE_float("max_gradient_norm", 5.0,
                           "Clip gradients to this norm.")
 tf.app.flags.DEFINE_integer("batch_size", 32,
                             "Batch size to use during training.")
-tf.app.flags.DEFINE_integer("size", 128, "Size of each model layer.")
+tf.app.flags.DEFINE_integer("size", 200, "Size of each model layer.")
 tf.app.flags.DEFINE_integer("num_layers", 2, "Number of layers in the model.")
 tf.app.flags.DEFINE_integer("from_vocab_size", 30000, "English vocabulary size.")
 tf.app.flags.DEFINE_integer("to_vocab_size", 30000, "French vocabulary size.")
@@ -67,7 +67,7 @@ tf.app.flags.DEFINE_string("from_dev_data", None, "Training data.")
 tf.app.flags.DEFINE_string("to_dev_data", None, "Training data.")
 tf.app.flags.DEFINE_integer("max_train_data_size", 0,
                             "Limit on the size of training data (0: no limit).")
-tf.app.flags.DEFINE_integer("steps_per_checkpoint", 2000,
+tf.app.flags.DEFINE_integer("steps_per_checkpoint", 400,
                             "How many training steps to do per checkpoint.")
 tf.app.flags.DEFINE_boolean("decode", False,
                             "Set to True for interactive decoding.")
@@ -112,8 +112,9 @@ def read_data(source_path, target_path, max_size=None):
           print("  reading data line %d" % counter)
           sys.stdout.flush()
         source_ids = [int(x) for x in source.split()]
-        #target_ids = [int(x) for x in target.split()]
-        target_ids = [source_ids.index(int(x)) for x in target.split()]
+        target_ids = [int(x) for x in target.split()]
+        #target_ids = [source_ids.index(int(x)) for x in target.split()]
+        source_ids.append(data_utils.EOS_ID)
         target_ids.append(data_utils.EOS_ID)
         for bucket_id, (source_size, target_size) in enumerate(_buckets):
           if len(source_ids) < source_size and len(target_ids) < target_size:
@@ -212,10 +213,10 @@ def train():
 
       # Get a batch and make a step.
       start_time = time.time()
-      encoder_inputs, decoder_inputs, target_weights = model.get_batch(
+      encoder_inputs, decoder_inputs, target_weights, target_inputs = model.get_batch(
           train_set, bucket_id)
       _, step_loss, _ = model.step(sess, encoder_inputs, decoder_inputs,
-                                   target_weights, bucket_id, False)
+                                   target_weights, target_inputs, bucket_id, False)
       step_time += (time.time() - start_time) / FLAGS.steps_per_checkpoint
       loss += step_loss / FLAGS.steps_per_checkpoint
       current_step += 1
@@ -242,12 +243,12 @@ def train():
           if len(dev_set[bucket_id]) == 0:
             print("  eval: empty bucket %d" % (bucket_id))
             continue
-          all_encoder_inputs, all_decoder_inputs, all_target_weights = model.get_all_batch(
+          all_encoder_inputs, all_decoder_inputs, all_target_weights, all_target_inputs = model.get_all_batch(
               dev_set, bucket_id)
           #ipdb.set_trace()
           for idx in xrange(len(all_encoder_inputs)):
             _, eval_loss, output_logits = model.step(sess, all_encoder_inputs[idx], all_decoder_inputs[idx],
-                                         all_target_weights[idx], bucket_id, True)
+                                         all_target_weights[idx], all_target_inputs[idx], bucket_id, True)
             #eval_ppx = math.exp(float(eval_loss)) if eval_loss < 300 else float(
             #    "inf")
             #print("  eval: bucket %d perplexity %.2f" % (bucket_id, eval_ppx))
