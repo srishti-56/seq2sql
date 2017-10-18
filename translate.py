@@ -118,7 +118,7 @@ def read_data(source_path, target_path, max_size=None):
         target_ids.append(data_utils.EOS_ID)
         for bucket_id, (source_size, target_size) in enumerate(_buckets):
           if len(source_ids) < source_size and len(target_ids) < target_size:
-            data_set[bucket_id].append([source_ids, target_ids])
+            data_set[bucket_id].append([source_ids, target_ids, counter - 1])
             break
         source, target = source_file.readline(), target_file.readline()
   return data_set
@@ -213,7 +213,7 @@ def train():
 
       # Get a batch and make a step.
       start_time = time.time()
-      encoder_inputs, decoder_inputs, target_weights, target_inputs = model.get_batch(
+      encoder_inputs, decoder_inputs, target_weights, target_inputs, sent_ids = model.get_batch(
           train_set, bucket_id)
       _, step_loss, _ = model.step(sess, encoder_inputs, decoder_inputs,
                                    target_weights, target_inputs, bucket_id, False)
@@ -238,17 +238,18 @@ def train():
         step_time, loss = 0.0, 0.0
         # Run evals on development set and print their perplexity.
         print("run evals")
-        ft = open('tmp.eval','w')
+        ft = open('tmp.eval.ids','w')
         for bucket_id in xrange(len(_buckets)):
           if len(dev_set[bucket_id]) == 0:
             print("  eval: empty bucket %d" % (bucket_id))
             continue
-          all_encoder_inputs, all_decoder_inputs, all_target_weights, all_target_inputs = model.get_all_batch(
+          all_encoder_inputs, all_decoder_inputs, all_target_weights, all_target_inputs, all_sent_ids = model.get_all_batch(
               dev_set, bucket_id)
           #ipdb.set_trace()
           for idx in xrange(len(all_encoder_inputs)):
             _, eval_loss, output_logits = model.step(sess, all_encoder_inputs[idx], all_decoder_inputs[idx],
                                          all_target_weights[idx], all_target_inputs[idx], bucket_id, True)
+            batch_ids = all_sent_ids[idx]
             #eval_ppx = math.exp(float(eval_loss)) if eval_loss < 300 else float(
             #    "inf")
             #print("  eval: bucket %d perplexity %.2f" % (bucket_id, eval_ppx))
@@ -266,9 +267,9 @@ def train():
             #if data_utils.EOS_ID in outputs:
             #  t = [m[:m.index(data_utils.EOS_ID)] for m in t] 
             
-            for m in out_ids:
+            for batch_id in xrange(len(swap_outputs)):
               #print(" ".join([tf.compat.as_str(rev_fr_vocab[o]) for o in m]))
-              ft.write(" ".join([tf.compat.as_str(rev_fr_vocab[o]) for o in m.tolist()]) + '\n')
+              ft.write(" ".join([tf.compat.as_str(rev_fr_vocab[o]) for o in out_ids[batch_id].tolist()]) + "|"+ str(batch_ids[batch_id]) + '\n')
         ft.close()
         print("finish evals")
         sys.stdout.flush()
