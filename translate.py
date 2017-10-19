@@ -38,6 +38,8 @@ import sys
 import time
 import logging
 #import ipdb
+import subprocess
+import cPickle as pkl 
 
 import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
@@ -56,9 +58,10 @@ tf.app.flags.DEFINE_float("max_gradient_norm", 5.0,
 tf.app.flags.DEFINE_integer("batch_size", 32,
                             "Batch size to use during training.")
 tf.app.flags.DEFINE_integer("size", 200, "Size of each model layer.")
+tf.app.flags.DEFINE_integer("emb_size", 400, "Size of embedding")
 tf.app.flags.DEFINE_integer("num_layers", 2, "Number of layers in the model.")
-tf.app.flags.DEFINE_integer("from_vocab_size", 30000, "English vocabulary size.")
-tf.app.flags.DEFINE_integer("to_vocab_size", 30000, "French vocabulary size.")
+tf.app.flags.DEFINE_integer("from_vocab_size", 40000, "English vocabulary size.")
+tf.app.flags.DEFINE_integer("to_vocab_size", 40000, "French vocabulary size.")
 tf.app.flags.DEFINE_string("data_dir", "./data/", "Data directory")
 tf.app.flags.DEFINE_string("train_dir", "./train", "Training directory.")
 tf.app.flags.DEFINE_string("from_train_data", None, "Training data.")
@@ -67,7 +70,7 @@ tf.app.flags.DEFINE_string("from_dev_data", None, "Training data.")
 tf.app.flags.DEFINE_string("to_dev_data", None, "Training data.")
 tf.app.flags.DEFINE_integer("max_train_data_size", 0,
                             "Limit on the size of training data (0: no limit).")
-tf.app.flags.DEFINE_integer("steps_per_checkpoint", 400,
+tf.app.flags.DEFINE_integer("steps_per_checkpoint", 1000,
                             "How many training steps to do per checkpoint.")
 tf.app.flags.DEFINE_boolean("decode", False,
                             "Set to True for interactive decoding.")
@@ -75,6 +78,7 @@ tf.app.flags.DEFINE_boolean("self_test", False,
                             "Run a self-test if this is set to True.")
 tf.app.flags.DEFINE_boolean("use_fp16", False,
                             "Train using fp16 instead of fp32.")
+tf.app.flags.DEFINE_string("pretrain_embs", "./data/mix_emb.pkl", "pretrained embeddings")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -83,6 +87,8 @@ FLAGS = tf.app.flags.FLAGS
 #_buckets = [(5, 10), (10, 15), (20, 25), (40, 50)]
 _buckets = [(50, 15), (60, 25), (70, 35), (200, 100)]
 
+def get_variable_by_name(name):
+  return [v for v in tf.global_variables() if v.name == name][0]
 
 def read_data(source_path, target_path, max_size=None):
   """Read data from source and target files and put into buckets.
@@ -132,6 +138,7 @@ def create_model(session, forward_only):
       FLAGS.to_vocab_size,
       _buckets,
       FLAGS.size,
+      FLAGS.emb_size,
       FLAGS.num_layers,
       FLAGS.max_gradient_norm,
       FLAGS.batch_size,
@@ -146,6 +153,16 @@ def create_model(session, forward_only):
   else:
     print("Created model with fresh parameters.")
     session.run(tf.global_variables_initializer())
+    if FLAGS.pretrain_embs:
+      with open(FLAGS.pretrain_embs, 'rb') as f:
+        emb = pkl.load(f)
+        expend_emb = np.concatenate([emb,\
+                     np.zeros([FLAGS.from_vocab_size - len(emb), FLAGS.emb_size])], axis=0)
+        encoder_emb = get_variable_by_name("embedding_attention_seq2seq/rnn/embedding_wrapper/embedding:0")
+        #encoder_emb = tf.get_default_graph().get_tensor_by_name("embedding_attention_seq2seq/rnn/embedding_wrapper/embedding:0")
+        decoder_emb = get_variable_by_name("embedding_attention_seq2seq/embedding_attention_decoder/embedding:0")
+        session.run(encoder_emb.assign(expend_emb)) 
+        session.run(decoder_emb.assign(expend_emb)) 
   return model
 
 
@@ -271,6 +288,11 @@ def train():
               #print(" ".join([tf.compat.as_str(rev_fr_vocab[o]) for o in m]))
               ft.write(" ".join([tf.compat.as_str(rev_fr_vocab[o]) for o in out_ids[batch_id].tolist()]) + "|"+ str(batch_ids[batch_id]) + '\n')
         ft.close()
+        print("converting output...")
+        subprocess.call("python convert_to_json.py --din tmp.eval.ids --dout out.json --dsource /users1/ybsun/seq2sql/WikiSQL/annotated/dev.jsonl", shell=True)
+        print("running evaluation script...")
+        subprocess.call("python evaluate.py ../WikiSQL/data/dev.jsonl ../WikiSQL/data/dev.db  ./out.json", shell=True)
+
         print("finish evals")
         sys.stdout.flush()
 

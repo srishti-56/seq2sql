@@ -49,6 +49,7 @@ class Seq2SeqModel(object):
                target_vocab_size,
                buckets,
                size,
+               emb_size,
                num_layers,
                max_gradient_norm,
                batch_size,
@@ -69,6 +70,7 @@ class Seq2SeqModel(object):
         longer than O will be pushed to the next bucket and padded accordingly.
         We assume that the list is sorted, e.g., [(2, 4), (8, 16)].
       size: number of units in each layer of the model.
+      emb_size: number of units in embedding layer of the model.
       num_layers: number of layers in the model.
       max_gradient_norm: gradients will be clipped to maximally this norm.
       batch_size: the size of the batches used during training;
@@ -140,7 +142,7 @@ class Seq2SeqModel(object):
           mycell(),
           num_encoder_symbols=source_vocab_size,
           num_decoder_symbols=target_vocab_size,
-          embedding_size=size,
+          embedding_size=emb_size,
           output_projection=output_projection,
           feed_previous=do_decode,
           dtype=dtype)
@@ -200,6 +202,11 @@ class Seq2SeqModel(object):
 
     # Gradients and SGD update operation for training the model.
     params = tf.trainable_variables()
+    print(len(params))
+    black_list = ['embedding_attention_seq2seq/rnn/embedding_wrapper/embedding:0',
+                  'embedding_attention_seq2seq/embedding_attention_decoder/embedding:0']
+    params = [v for v in params if not v.name in black_list]
+    print(len(params))
     if not forward_only:
       self.gradient_norms = []
       self.updates = []

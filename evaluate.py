@@ -18,7 +18,7 @@ if __name__ == '__main__':
     exact_match = []
     with open(args.source_file) as fs, open(args.pred_file) as fp:
         grades = []
-        for ls, lp in tqdm(zip(fs, fp), total=count_lines(args.source_file)):
+        for ls, lp in tqdm(zip(fs, fp), total=count_lines(args.pred_file)):
             eg = json.loads(ls)
             ep = json.loads(lp)
             qg = Query.from_dict(eg['sql'])
@@ -34,6 +34,9 @@ if __name__ == '__main__':
                     pred = repr(e)
             correct = pred == gold
             match = qp == qg
+            #if not match:
+            #    print qp.to_dict()
+            #    print qg.to_dict()
             grades.append(correct)
             exact_match.append(match)
         print(json.dumps({

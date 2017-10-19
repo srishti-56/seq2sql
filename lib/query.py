@@ -21,7 +21,7 @@ class Query:
     def __eq__(self, other):
         if isinstance(other, self.__class__):
             indices = self.sel_index == other.sel_index and self.agg_index == other.agg_index
-            conds = [(col, op, cond.lower() if isinstance(cond, str) else cond) for col, op, cond in self.conditions] == [(col, op, cond.lower() if isinstance(cond, str) else cond) for col, op, cond in other.conditions]
+            conds = [(col, op, cond.lower() if isinstance(cond, str) or isinstance(cond, unicode) else cond) for col, op, cond in self.conditions] == [(col, op, cond.lower() if isinstance(cond, str) or isinstance(cond, unicode) else cond) for col, op, cond in other.conditions]
             return indices and conds
         return NotImplemented
 

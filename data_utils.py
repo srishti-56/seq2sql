@@ -18,10 +18,15 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import cPickle as pkl
+import collections
 import gzip
 import os
 import re
 import tarfile
+import numpy as np
+from tqdm import tqdm
+#import ipdb
 
 from six.moves import urllib
 
@@ -48,6 +53,9 @@ _DIGIT_RE = re.compile(br"\d")
 _WMT_ENFR_TRAIN_URL = "http://www.statmt.org/wmt10/training-giga-fren.tar"
 _WMT_ENFR_DEV_URL = "http://www.statmt.org/wmt15/dev-v2.tgz"
 
+def count_lines(fname):
+  with open(fname) as f:
+    return sum(1 for line in f)
 
 def maybe_download(directory, filename, url):
   """Download filename from url unless it's already in directory."""
@@ -113,7 +121,7 @@ def basic_tokenizer(sentence):
 
 
 def create_vocabulary(vocabulary_path, data_path, max_vocabulary_size,
-                      tokenizer=None, normalize_digits=True):
+                      tokenizer=None, normalize_digits=False):
   """Create vocabulary file (if it does not exist yet) from data file.
 
   Data file is assumed to contain one sentence per line. Each sentence is
@@ -131,28 +139,30 @@ def create_vocabulary(vocabulary_path, data_path, max_vocabulary_size,
     normalize_digits: Boolean; if true, all digits are replaced by 0s.
   """
   if not gfile.Exists(vocabulary_path):
-    print("Creating vocabulary %s from data %s" % (vocabulary_path, data_path))
+    print("Creating vocabulary %s from data %s" % (vocabulary_path, str(data_path)))
     vocab = {}
-    with gfile.GFile(data_path, mode="rb") as f:
-      counter = 0
-      for line in f:
-        counter += 1
-        if counter % 100000 == 0:
-          print("  processing line %d" % counter)
-        line = tf.compat.as_bytes(line)
-        tokens = tokenizer(line) if tokenizer else basic_tokenizer(line)
-        for w in tokens:
-          word = _DIGIT_RE.sub(b"0", w) if normalize_digits else w
-          if word in vocab:
-            vocab[word] += 1
-          else:
-            vocab[word] = 1
-      vocab_list = _START_VOCAB + sorted(vocab, key=vocab.get, reverse=True)
-      if len(vocab_list) > max_vocabulary_size:
-        vocab_list = vocab_list[:max_vocabulary_size]
-      with gfile.GFile(vocabulary_path, mode="wb") as vocab_file:
-        for w in vocab_list:
-          vocab_file.write(w + b"\n")
+    counter = 0
+    for df in data_path:
+      with gfile.GFile(df, mode="rb") as f:
+        for line in f:
+          counter += 1
+          if counter % 100000 == 0:
+            print("  processing line %d" % counter)
+          line = tf.compat.as_bytes(line)
+          tokens = tokenizer(line) if tokenizer else basic_tokenizer(line)
+          for w in tokens:
+            word = _DIGIT_RE.sub(b"0", w) if normalize_digits else w
+            if word in vocab:
+              vocab[word] += 1
+            else:
+              vocab[word] = 1
+
+    vocab_list = _START_VOCAB + sorted(vocab, key=vocab.get, reverse=True)
+    if len(vocab_list) > max_vocabulary_size:
+      vocab_list = vocab_list[:max_vocabulary_size]
+    with gfile.GFile(vocabulary_path, mode="wb") as vocab_file:
+      for w in vocab_list:
+        vocab_file.write(w + b"\n")
 
 
 def initialize_vocabulary(vocabulary_path):
@@ -186,7 +196,7 @@ def initialize_vocabulary(vocabulary_path):
 
 
 def sentence_to_token_ids(sentence, vocabulary,
-                          tokenizer=None, normalize_digits=True):
+                          tokenizer=None, normalize_digits=False):
   """Convert a string to list of integers representing token-ids.
 
   For example, a sentence "I have a dog" may become tokenized into
@@ -215,7 +225,7 @@ def sentence_to_token_ids(sentence, vocabulary,
 
 
 def data_to_token_ids(data_path, target_path, vocabulary_path,
-                      tokenizer=None, normalize_digits=True):
+                      tokenizer=None, normalize_digits=False):
   """Tokenize data file and turn into token-ids using given vocabulary file.
 
   This function loads data line-by-line from data_path, calls the above
@@ -303,8 +313,8 @@ def prepare_data(data_dir, from_train_path, to_train_path, from_dev_path, to_dev
   # Create vocabularies of the appropriate sizes.
   to_vocab_path = os.path.join(data_dir, "vocab%d.to" % to_vocabulary_size)
   from_vocab_path = os.path.join(data_dir, "vocab%d.from" % from_vocabulary_size)
-  create_vocabulary(to_vocab_path, to_train_path , to_vocabulary_size, tokenizer)
-  create_vocabulary(from_vocab_path, from_train_path , from_vocabulary_size, tokenizer)
+  #create_vocabulary(to_vocab_path, to_train_path , to_vocabulary_size, tokenizer)
+  create_vocabulary(from_vocab_path, [from_train_path, from_dev_path] , from_vocabulary_size, tokenizer)
 
   # Create token ids for the training data.
   to_train_ids_path = to_train_path + (".ids%d" % to_vocabulary_size)
@@ -321,3 +331,121 @@ def prepare_data(data_dir, from_train_path, to_train_path, from_dev_path, to_dev
   return (from_train_ids_path, to_train_ids_path,
           from_dev_ids_path, to_dev_ids_path,
           from_vocab_path, to_vocab_path)
+
+def ngrams(sentence, n):
+  """
+  Returns:
+       list: a list of lists of words corresponding to the ngrams in the sentence.
+  """
+  return [sentence[i:i+n] for i in range(len(sentence)-n+1)]
+
+
+def emb(w, char_emb, chars, dim):
+  #chars = ['#BEGIN#'] + list(w) + ['#END#']
+  embs = np.zeros(dim, dtype=np.float32)
+  match = {}
+  try:
+    for i in [2, 3, 4]:
+      grams = ngrams(w, i)
+      for g in grams:
+        #g = g.decode('utf-8')
+        g = u'{}gram-{}'.format(i, ''.join(g))
+        if g in chars:
+          match[g] = char_emb[chars.index(g)]
+  except Exception as e:
+    print(e)
+    print(grams)
+    print(match)
+    #ipdb.set_trace()
+    pass
+
+  if match:
+    embs = sum(match.values()) / len(match)
+  return embs 
+
+def load_word2emb(fin_name, dim, show_progress=True):
+  char_emd = []
+  chars = []
+  char_embeddings = np.zeros([874474, 100])
+  with open(fin_name) as fin:
+    content = fin.read()
+    lines = content.splitlines()
+    if show_progress:
+      lines = tqdm(lines)
+    cnt = 0
+    for line in lines:
+      elems = line.decode('utf-8').rstrip().split()
+      vec = [float(n) for n in elems[-dim:]]
+      word = ' '.join(elems[:-dim])
+      char_embeddings[cnt] = vec
+      chars.append(word)
+      cnt += 1
+  return char_embeddings, chars
+
+def convert_to_unicode(data, decode_type='utf-8'):
+  if isinstance(data, basestring):
+    return data.decode(decode_type)
+  elif isinstance(data, collections.Mapping):
+    return dict(map(convert_to_unicode, data.iteritems()))
+  elif isinstance(data, collections.Iterable):
+    return type(data)(map(convert_to_unicode, data))
+  else:
+    return data
+
+def gen_embeddings(word_dict, rev_word_dict, dim1, dim2, in_file=None, in_file_char=None,
+                   save='./data/mix_emb'):
+  """
+      Generate an initial embedding matrix for `word_dict`.
+      If an embedding file is not given or a word is not in the embedding file,
+      a randomly initialized vector will be used.
+  """
+  word_dict = convert_to_unicode(word_dict, 'utf-8')
+  rev_word_dict = convert_to_unicode(rev_word_dict, 'utf-8')
+
+  num_words = max(word_dict.values()) + 1
+  embeddings = np.zeros([num_words, dim1 + dim2])
+
+  print('loading Glove embeddings...')
+  if in_file is not None:
+    pre_trained = 0
+    with open(in_file) as infile: 
+      for line in tqdm(infile, total=count_lines(in_file)):
+        sp = line.decode('utf-8').rstrip().split()
+        try:
+          word = ' '.join(sp[:-dim1])
+          if word in word_dict:
+            vec = [float(n) for n in sp[-dim1:]]
+            pre_trained += 1
+            embeddings[word_dict[word]][:dim1] = vec 
+        except Exception as e:
+            print(line)
+            print(word)
+            print(vec)
+            pass
+  
+
+  print('loading Char embeddings...')
+  if in_file_char is not None:
+    char_emb, chars = load_word2emb(in_file_char, dim2)
+
+  char_pre_trained = 0
+  all_pre_trained = 0
+  print('Computing Char_to_Word embeddings...')
+  for idx in tqdm(xrange(len(embeddings)), total=len(embeddings)):
+    embeddings[idx][dim1:] = emb(rev_word_dict[idx], char_emb, chars, dim2)
+    if np.any(embeddings[idx]):
+      all_pre_trained += 1
+      if np.any(embeddings[idx][dim1:]):
+        char_pre_trained += 1
+
+  if save:
+    pkl.dump(embeddings, open('%s.pkl' % save, 'wb')) 
+
+  print('Glove Pre-trained: %d (%.2f%%)' %
+                 (pre_trained, pre_trained * 100.0 / num_words))
+  print('Char Pre-trained: %d (%.2f%%)' %
+                 (pre_trained, char_pre_trained * 100.0 / num_words))
+  print('All Pre-trained: %d (%.2f%%)' %
+                 (pre_trained, all_pre_trained * 100.0 / num_words))
+
+  return embeddings

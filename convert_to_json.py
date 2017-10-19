@@ -40,7 +40,8 @@ if __name__ == '__main__':
             json_line['error'] = ""
             seq_in = seq_in.decode('utf-8')
             seq_in = seq_in.split(' ')
-            seq_in = seq_in[:seq_in.index('_EOS')]
+            if '_EOS' in seq_in:
+                seq_in = seq_in[:seq_in.index('_EOS')]
             json_line['seq'] = ' '.join(seq_in)
             sj = json.loads(data_source[source_idx])
             try:
