@@ -387,13 +387,19 @@ def embedding_rnn_seq2seq(encoder_inputs,
     else:
       dtype = scope.dtype
 
-    # Encoder.
-    encoder_cell = copy.deepcopy(cell)
-    encoder_cell = core_rnn_cell.EmbeddingWrapper(
-        encoder_cell,
+    # Encoder.  python.ops.rnn
+    encoder_cell_fw = copy.deepcopy(cell)
+    encoder_cell_fw = core_rnn_cell.EmbeddingWrapper(
+        encoder_cell_fw,
         embedding_classes=num_encoder_symbols,
         embedding_size=embedding_size)
-    _, encoder_state = rnn.static_rnn(encoder_cell, encoder_inputs, dtype=dtype)
+    encoder_cell_bw = copy.deepcopy(cell)
+    encoder_cell_bw = core_rnn_cell.EmbeddingWrapper(
+        encoder_cell_bw,
+        embedding_classes=num_encoder_symbols,
+        embedding_size=embedding_size)
+    #_, encoder_state = rnn.static_rnn(encoder_cell, encoder_inputs, dtype=dtype)
+    encoder_state, _, _ = rnn.static_bidirectional_rnn(encoder_cell_fw, encoder_cell_bw, encoder_inputs, dtype=dtype)
 
     # Decoder.
     if output_projection is None:
@@ -807,17 +813,17 @@ def embedding_attention_decoder(decoder_inputs,
   with variable_scope.variable_scope(
       scope or "embedding_attention_decoder", dtype=dtype) as scope:
 
-    embedding = variable_scope.get_variable("embedding",
-                                            [num_symbols, embedding_size])
+    #embedding = variable_scope.get_variable("embedding",
+    #                                        [num_symbols, embedding_size])
     encoder_tensor = array_ops.stack(encoder_inputs, axis=0)
     loop_function = _copy_loop(
         embedding, encoder_tensor, output_projection,
         update_embedding_for_previous) if feed_previous else None
-    emb_inp = [
-        embedding_ops.embedding_lookup(embedding, i) for i in decoder_inputs
-    ]
+    #emb_inp = [
+    #    embedding_ops.embedding_lookup(embedding, i) for i in decoder_inputs
+    #]
     return attention_decoder(
-        emb_inp,
+        decoder_inputs,
         initial_state,
         attention_states,
         cell,
@@ -887,19 +893,49 @@ def embedding_attention_seq2seq(encoder_inputs,
       scope or "embedding_attention_seq2seq", dtype=dtype) as scope:
     dtype = scope.dtype
     # Encoder.
-    encoder_cell = copy.deepcopy(cell)
-    encoder_cell = core_rnn_cell.EmbeddingWrapper(
-        encoder_cell,
-        embedding_classes=num_encoder_symbols,
-        embedding_size=embedding_size)
-    encoder_outputs, encoder_state = rnn.static_rnn(
-        encoder_cell, encoder_inputs, dtype=dtype)
+    #encoder_cell = copy.deepcopy(cell)
+    #encoder_cell = core_rnn_cell.EmbeddingWrapper(
+    #    encoder_cell,
+    #    embedding_classes=num_encoder_symbols,
+    #    embedding_size=embedding_size)
+    #encoder_outputs, encoder_state = rnn.static_rnn(
+    #    encoder_cell, encoder_inputs, dtype=dtype)
+    embedding = variable_scope.get_variable("embedding",
+                                            [num_encoder_symbols, embedding_size], trainable=False)
+    encoder_emb_inp = [
+        embedding_ops.embedding_lookup(embedding, i) for i in encoder_inputs
+    ]
+    decoder_emb_inp = [
+        embedding_ops.embedding_lookup(embedding, i) for i in decoder_inputs
+    ]
+
+    encoder_cell_fw = copy.deepcopy(cell)
+    encoder_cell_bw = copy.deepcopy(cell)
+    encoder_outputs, state_fw, state_bw = rnn.static_bidirectional_rnn(encoder_cell_fw, encoder_cell_bw, encoder_emb_inp, dtype=dtype)
 
     # First calculate a concatenation of encoder outputs to put attention on.
     top_states = [
-        array_ops.reshape(e, [-1, 1, cell.output_size]) for e in encoder_outputs
+        array_ops.reshape(e, [-1, 1, cell.output_size*2]) for e in encoder_outputs
     ]
     attention_states = array_ops.concat(top_states, 1)
+
+    encoder_proj = variable_scope.get_variable("Encoder_Proj",
+                                      [cell.output_size*2, cell.output_size])
+    attention_states = array_ops.reshape(attention_states, [-1, cell.output_size*2])
+    attention_states = math_ops.matmul(attention_states, encoder_proj)
+    attention_states = array_ops.reshape(attention_states, [-1, len(top_states), cell.output_size])
+    last_state = array_ops.reshape(attention_states[:,-1,:], [-1, cell.output_size])
+    #if nest.is_sequence(state_fw):
+    #  encoder_proj_c = variable_scope.get_variable("Encoder_Proj_c",
+    #                                  [cell.output_size*2, cell.output_size])
+    #  fc, fh = state_fw
+    #  bc, bh = state_bw
+    #  state_c = math_ops.matmul(fc, encoder_proj_c) #array_ops.concat([fc, bw], 1)
+    #  last_state = LSTMStateTuple.LSTMStateTuple(state_c, last_state) 
+        
+    #else:
+    #print(last_state.shape)
+    encoder_state = state_fw 
 
     # Decoder.
     output_size = None
@@ -909,7 +945,7 @@ def embedding_attention_seq2seq(encoder_inputs,
 
     if isinstance(feed_previous, bool):
       return embedding_attention_decoder(
-          decoder_inputs,
+          decoder_emb_inp,
           encoder_inputs,
           encoder_state,
           attention_states,
@@ -924,6 +960,7 @@ def embedding_attention_seq2seq(encoder_inputs,
 
     # If feed_previous is a Tensor, we construct 2 graphs and use cond.
     def decoder(feed_previous_bool):
+      print("here!")
       reuse = None if feed_previous_bool else True
       with variable_scope.variable_scope(
           variable_scope.get_variable_scope(), reuse=reuse):

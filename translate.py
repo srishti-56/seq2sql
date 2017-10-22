@@ -158,11 +158,10 @@ def create_model(session, forward_only):
         emb = pkl.load(f)
         expend_emb = np.concatenate([emb,\
                      np.zeros([FLAGS.from_vocab_size - len(emb), FLAGS.emb_size])], axis=0)
-        encoder_emb = get_variable_by_name("embedding_attention_seq2seq/rnn/embedding_wrapper/embedding:0")
         #encoder_emb = tf.get_default_graph().get_tensor_by_name("embedding_attention_seq2seq/rnn/embedding_wrapper/embedding:0")
-        decoder_emb = get_variable_by_name("embedding_attention_seq2seq/embedding_attention_decoder/embedding:0")
-        session.run(encoder_emb.assign(expend_emb)) 
-        session.run(decoder_emb.assign(expend_emb)) 
+        variable_emb = get_variable_by_name("embedding_attention_seq2seq/embedding:0")
+        print(variable_emb)
+        session.run(variable_emb.assign(expend_emb)) 
   return model
 
 

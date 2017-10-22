@@ -55,7 +55,7 @@ class Seq2SeqModel(object):
                batch_size,
                learning_rate,
                learning_rate_decay_factor,
-               use_lstm=False,
+               use_lstm=True,
                num_samples=512,
                forward_only=False,
                dtype=tf.float32):
@@ -202,15 +202,11 @@ class Seq2SeqModel(object):
 
     # Gradients and SGD update operation for training the model.
     params = tf.trainable_variables()
-    print(len(params))
-    black_list = ['embedding_attention_seq2seq/rnn/embedding_wrapper/embedding:0',
-                  'embedding_attention_seq2seq/embedding_attention_decoder/embedding:0']
-    params = [v for v in params if not v.name in black_list]
-    print(len(params))
     if not forward_only:
       self.gradient_norms = []
       self.updates = []
       opt = tf.train.GradientDescentOptimizer(self.learning_rate)
+      #opt = tf.train.AdamOptimizer(self.learning_rate)
       for b in xrange(len(buckets)):
         gradients = tf.gradients(self.losses[b], params)
         clipped_gradients, norm = tf.clip_by_global_norm(gradients,

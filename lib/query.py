@@ -71,6 +71,89 @@ class Query:
         return cls(d['sel'], d['agg'], conds)
 
     @classmethod
+    def get_agg_col(cls, sequence, table, lowercase=True):
+        sequence = deepcopy(sequence)
+        if 'symend' in sequence['words']:
+            end = sequence['words'].index('symend')
+            for k, v in sequence.items():
+                sequence[k] = v[:end]
+        terms = [{'gloss': g, 'word': w, 'after': a} for  g, w, a in zip(sequence['gloss'], sequence['words'], sequence['after'])]
+        headers = [detokenize(h) for h in table['header']]
+ 
+        if lowercase:
+            headers = [h.lower() for h in headers]
+            for i, t in enumerate(terms):
+                for k, v in t.items():
+                    t[k] = v.lower()
+        headers_no_whitespcae = [re.sub(re_whitespace, '', h) for h in headers]
+
+        def find_column(name):
+            return headers_no_whitespcae.index(re.sub(re_whitespace, '', name))
+
+        def flatten(tokens):
+            ret = {'words': [], 'after': [], 'gloss': []}
+            for t in tokens:
+                ret['words'].append(t['word'])
+                ret['after'].append(t['after'])
+                ret['gloss'].append(t['gloss'])
+            return ret
+        while terms and 'symcol' != terms.pop(0)['word']:
+            continue
+        where_index = [i for i, t in enumerate(terms) if t['word'] == 'symwhere']
+        where_index = where_index[0] if where_index else len(terms)
+        flat = flatten(terms[:where_index])
+        try:
+            agg_col = find_column(detokenize(flat))
+        except Exception as e:
+            #raise Exception('Cannot find aggregation column {}'.format(flat['words']))
+            return -1
+        return agg_col
+ 
+
+    @classmethod
+    def get_agg_op(cls, sequence, table, lowercase=True):
+        sequence = deepcopy(sequence)
+        if 'symend' in sequence['words']:
+            end = sequence['words'].index('symend')
+            for k, v in sequence.items():
+                sequence[k] = v[:end]
+        terms = [{'gloss': g, 'word': w, 'after': a} for  g, w, a in zip(sequence['gloss'], sequence['words'], sequence['after'])]
+        headers = [detokenize(h) for h in table['header']]
+ 
+        if lowercase:
+            headers = [h.lower() for h in headers]
+            for i, t in enumerate(terms):
+                for k, v in t.items():
+                    t[k] = v.lower()
+        headers_no_whitespcae = [re.sub(re_whitespace, '', h) for h in headers]
+        try:
+            if 'symselect' != terms.pop(0)['word']:
+                #raise Exception('Missing symselect operator')
+                return -1
+
+            # get aggregation
+            if 'symagg' != terms.pop(0)['word']:
+                #raise Exception('Missing symagg operator')
+                return -1
+            agg_op = terms.pop(0)['word']
+
+            if agg_op == 'symcol':
+                agg_op = ''
+            else:
+                if 'symcol' != terms.pop(0)['word']:
+                    #raise Exception('Missing aggregation column')
+                    return -1
+            agg_op = cls.agg_ops.index(agg_op.upper())
+        except Exception as e:
+            print(e)
+            #raise Exception('Invalid agg op {}'.format(agg_op))
+            return -1
+
+        return agg_op
+ 
+
+
+    @classmethod
     def from_sequence(cls, sequence, table, lowercase=True):
         sequence = deepcopy(sequence)
         if 'symend' in sequence['words']:
