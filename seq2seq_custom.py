@@ -74,6 +74,7 @@ from tensorflow.python.ops import rnn
 from tensorflow.python.ops import rnn_cell_impl
 from tensorflow.python.ops import variable_scope
 from tensorflow.python.util import nest
+import tensorflow as tf
 
 # TODO(ebrevdo): Remove once _linear is fully deprecated.
 linear = rnn_cell_impl._linear  # pylint: disable=protected-access
@@ -127,9 +128,14 @@ def _copy_loop(embedding, encoder_inputs,
   def loop_function(prev, _):
     #if output_projection is not None:
     #  prev = nn_ops.xw_plus_b(prev, output_projection[0], output_projection[1])
-    prev_position = math_ops.argmax(prev[1], 1) #zip(output, logits)
+    #print(array_ops.shape(prev))
+    #print(array_ops.shape(prev[1]))
+    prev_position = math_ops.argmax(prev[1][0], 1) #zip(output, logits)
+    #print(array_ops.shape(prev_position))
 
-    second_indices = array_ops.range(array_ops.shape(prev_symbol)[0])
+    second_indices = tf.range(array_ops.shape(prev_position)[0])
+    second_indices = tf.cast(second_indices, dtype=tf.int64)
+    #print(array_ops.shape(second_indices))
     nd_index = array_ops.stack([prev_position, second_indices], axis=1) 
     prev_symbol = array_ops.gather_nd(encoder_inputs, nd_index)
     # Note that gradients will not propagate through the second parameter of
@@ -815,6 +821,7 @@ def embedding_attention_decoder(decoder_inputs,
 
     #embedding = variable_scope.get_variable("embedding",
     #                                        [num_symbols, embedding_size])
+    embedding = [v for v in tf.global_variables() if v.name == "embedding_attention_seq2seq/embedding:0"][0]
     encoder_tensor = array_ops.stack(encoder_inputs, axis=0)
     loop_function = _copy_loop(
         embedding, encoder_tensor, output_projection,
