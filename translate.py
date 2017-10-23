@@ -44,13 +44,16 @@ import cPickle as pkl
 import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
+from tensorflow.python import debug as tf_debug
 
 import data_utils
 import seq2seq_model
+from tqdm import tqdm
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 
 tf.app.flags.DEFINE_float("learning_rate", 0.5, "Learning rate.")
+tf.app.flags.DEFINE_float("drop_out", 0.5, "drop out rate")
 tf.app.flags.DEFINE_float("learning_rate_decay_factor", 0.99,
                           "Learning rate decays by this much.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 5.0,
@@ -144,6 +147,7 @@ def create_model(session, forward_only):
       FLAGS.batch_size,
       FLAGS.learning_rate,
       FLAGS.learning_rate_decay_factor,
+      drop_out=FLAGS.drop_out,
       forward_only=forward_only,
       dtype=dtype)
   ckpt = tf.train.get_checkpoint_state(FLAGS.train_dir)
@@ -197,103 +201,118 @@ def train():
       from_train, to_train, from_dev, to_dev, _, _ = data_utils.prepare_wmt_data(
           FLAGS.data_dir, FLAGS.from_vocab_size, FLAGS.to_vocab_size)
 
-  with tf.Session() as sess:
-    # Create model.
+  train_graph = tf.Graph()
+  eval_graph = tf.Graph()
+  train_sess = tf.Session(graph=train_graph)
+  eval_sess = tf.Session(graph=eval_graph)
+  #eval_sess = tf_debug.LocalCLIDebugWrapperSession(eval_sess)
+
+
+  with train_graph.as_default():
+    # Create train model.
     print("Creating %d layers of %d units." % (FLAGS.num_layers, FLAGS.size))
-    model = create_model(sess, False)
+    train_model = create_model(train_sess, False)
 
-    # Read data into buckets and compute their sizes.
-    print ("Reading development and training data (limit: %d)."
-           % FLAGS.max_train_data_size)
-    dev_set = read_data(from_dev, to_dev)
-    train_set = read_data(from_train, to_train, FLAGS.max_train_data_size)
-    train_bucket_sizes = [len(train_set[b]) for b in xrange(len(_buckets))]
-    train_total_size = float(sum(train_bucket_sizes))
+  with eval_graph.as_default():
+    # Create eval model.
+    print("Creating %d layers of %d units." % (FLAGS.num_layers, FLAGS.size))
+    eval_model = create_model(eval_sess, True)
 
-    # A bucket scale is a list of increasing numbers from 0 to 1 that we'll use
-    # to select a bucket. Length of [scale[i], scale[i+1]] is proportional to
-    # the size if i-th training bucket, as used later.
-    train_buckets_scale = [sum(train_bucket_sizes[:i + 1]) / train_total_size
-                           for i in xrange(len(train_bucket_sizes))]
+  #with tf.Session() as sess:
 
-    # This is the training loop.
-    step_time, loss = 0.0, 0.0
-    current_step = 0
-    previous_losses = []
-    while True:
-      # Choose a bucket according to data distribution. We pick a random number
-      # in [0, 1] and use the corresponding interval in train_buckets_scale.
-      random_number_01 = np.random.random_sample()
-      bucket_id = min([i for i in xrange(len(train_buckets_scale))
-                       if train_buckets_scale[i] > random_number_01])
+  # Read data into buckets and compute their sizes.
+  print ("Reading development and training data (limit: %d)."
+         % FLAGS.max_train_data_size)
+  dev_set = read_data(from_dev, to_dev)
+  train_set = read_data(from_train, to_train, FLAGS.max_train_data_size)
+  train_bucket_sizes = [len(train_set[b]) for b in xrange(len(_buckets))]
+  train_total_size = float(sum(train_bucket_sizes))
 
-      # Get a batch and make a step.
-      start_time = time.time()
-      encoder_inputs, decoder_inputs, target_weights, target_inputs, sent_ids = model.get_batch(
-          train_set, bucket_id)
-      _, step_loss, _ = model.step(sess, encoder_inputs, decoder_inputs,
-                                   target_weights, target_inputs, bucket_id, False)
-      step_time += (time.time() - start_time) / FLAGS.steps_per_checkpoint
-      loss += step_loss / FLAGS.steps_per_checkpoint
-      current_step += 1
+  # A bucket scale is a list of increasing numbers from 0 to 1 that we'll use
+  # to select a bucket. Length of [scale[i], scale[i+1]] is proportional to
+  # the size if i-th training bucket, as used later.
+  train_buckets_scale = [sum(train_bucket_sizes[:i + 1]) / train_total_size
+                         for i in xrange(len(train_bucket_sizes))]
 
-      # Once in a while, we save checkpoint, print statistics, and run evals.
-      if current_step % FLAGS.steps_per_checkpoint == 0:
-        # Print statistics for the previous epoch.
-        perplexity = math.exp(float(loss)) if loss < 300 else float("inf")
-        print ("global step %d learning rate %.4f step-time %.2f perplexity "
-               "%.2f" % (model.global_step.eval(), model.learning_rate.eval(),
-                         step_time, perplexity))
-        # Decrease learning rate if no improvement was seen over last 3 times.
-        if len(previous_losses) > 2 and loss > max(previous_losses[-3:]):
-          sess.run(model.learning_rate_decay_op)
-        previous_losses.append(loss)
-        # Save checkpoint and zero timer and loss.
-        checkpoint_path = os.path.join(FLAGS.train_dir, "translate.ckpt")
-        model.saver.save(sess, checkpoint_path, global_step=model.global_step)
-        step_time, loss = 0.0, 0.0
-        # Run evals on development set and print their perplexity.
-        print("run evals")
-        ft = open('tmp.eval.ids','w')
-        for bucket_id in xrange(len(_buckets)):
-          if len(dev_set[bucket_id]) == 0:
-            print("  eval: empty bucket %d" % (bucket_id))
-            continue
-          all_encoder_inputs, all_decoder_inputs, all_target_weights, all_target_inputs, all_sent_ids = model.get_all_batch(
-              dev_set, bucket_id)
+  # This is the training loop.
+  step_time, loss = 0.0, 0.0
+  current_step = 0
+  previous_losses = []
+  while True:
+    # Choose a bucket according to data distribution. We pick a random number
+    # in [0, 1] and use the corresponding interval in train_buckets_scale.
+    random_number_01 = np.random.random_sample()
+    bucket_id = min([i for i in xrange(len(train_buckets_scale))
+                     if train_buckets_scale[i] > random_number_01])
+
+    # Get a batch and make a step.
+    start_time = time.time()
+    encoder_inputs, decoder_inputs, target_weights, target_inputs, sent_ids = train_model.get_batch(
+        train_set, bucket_id)
+    _, step_loss, _ = train_model.step(train_sess, encoder_inputs, decoder_inputs,
+                                 target_weights, target_inputs, bucket_id, False)
+    step_time += (time.time() - start_time) / FLAGS.steps_per_checkpoint
+    loss += step_loss / FLAGS.steps_per_checkpoint
+    current_step += 1
+
+    # Once in a while, we save checkpoint, print statistics, and run evals.
+    if current_step % FLAGS.steps_per_checkpoint == 0:
+      # Print statistics for the previous epoch.
+      perplexity = math.exp(float(loss)) if loss < 300 else float("inf")
+      print ("global step %d learning rate %.4f step-time %.2f perplexity "
+             "%.2f" % (train_model.global_step.eval(session = train_sess), train_model.learning_rate.eval(session = train_sess),
+                       step_time, perplexity))
+      # Decrease learning rate if no improvement was seen over last 3 times.
+      if len(previous_losses) > 2 and loss > max(previous_losses[-3:]):
+        train_sess.run(train_model.learning_rate_decay_op)
+      previous_losses.append(loss)
+      # Save checkpoint and zero timer and loss.
+      checkpoint_path = os.path.join(FLAGS.train_dir, "translate.ckpt")
+      ckpt_path = train_model.saver.save(train_sess, checkpoint_path, global_step=train_model.global_step)
+      eval_model.saver.restore(eval_sess, ckpt_path)
+      step_time, loss = 0.0, 0.0
+      # Run evals on development set and print their perplexity.
+      print("run evals")
+      ft = open('tmp.eval.ids','w')
+      for bucket_id in xrange(len(_buckets)):
+        if len(dev_set[bucket_id]) == 0:
+          print("  eval: empty bucket %d" % (bucket_id))
+          continue
+        all_encoder_inputs, all_decoder_inputs, all_target_weights, all_target_inputs, all_sent_ids = eval_model.get_all_batch(
+            dev_set, bucket_id)
+        #ipdb.set_trace()
+        for idx in xrange(len(all_encoder_inputs)):
+          _, eval_loss, output_logits = eval_model.step(eval_sess, all_encoder_inputs[idx], all_decoder_inputs[idx],
+                                       all_target_weights[idx], all_target_inputs[idx], bucket_id, True)
+          batch_ids = all_sent_ids[idx]
+          #eval_ppx = math.exp(float(eval_loss)) if eval_loss < 300 else float(
+          #    "inf")
+          #print("  eval: bucket %d perplexity %.2f" % (bucket_id, eval_ppx))
           #ipdb.set_trace()
-          for idx in xrange(len(all_encoder_inputs)):
-            _, eval_loss, output_logits = model.step(sess, all_encoder_inputs[idx], all_decoder_inputs[idx],
-                                         all_target_weights[idx], all_target_inputs[idx], bucket_id, True)
-            batch_ids = all_sent_ids[idx]
-            #eval_ppx = math.exp(float(eval_loss)) if eval_loss < 300 else float(
-            #    "inf")
-            #print("  eval: bucket %d perplexity %.2f" % (bucket_id, eval_ppx))
-            #ipdb.set_trace()
-            swap_inputs = np.array(all_encoder_inputs[idx])
-            swap_inputs = swap_inputs.swapaxes(0,1) 
+          swap_inputs = np.array(all_encoder_inputs[idx])
+          swap_inputs = swap_inputs.swapaxes(0,1) 
 
-            outputs = [np.argmax(logit, axis=1) for logit in output_logits]
-            swap_outputs = np.array(outputs)
-            swap_outputs = swap_outputs.swapaxes(0,1) 
+          outputs = [np.argmax(logit, axis=1) for logit in output_logits]
+          swap_outputs = np.array(outputs)
+          swap_outputs = swap_outputs.swapaxes(0,1) 
 
-            out_ids = []
-            for batch_id in xrange(len(swap_outputs)):
-              out_ids.append(swap_inputs[batch_id][swap_outputs[batch_id]])
-            #if data_utils.EOS_ID in outputs:
-            #  t = [m[:m.index(data_utils.EOS_ID)] for m in t] 
-            
-            for batch_id in xrange(len(swap_outputs)):
-              #print(" ".join([tf.compat.as_str(rev_fr_vocab[o]) for o in m]))
-              ft.write(" ".join([tf.compat.as_str(rev_fr_vocab[o]) for o in out_ids[batch_id].tolist()]) + "|"+ str(batch_ids[batch_id]) + '\n')
-        ft.close()
-        print("converting output...")
-        subprocess.call("python convert_to_json.py --din tmp.eval.ids --dout out.json --dsource /users1/ybsun/seq2sql/WikiSQL/annotated/dev.jsonl", shell=True)
-        print("running evaluation script...")
-        subprocess.call("python evaluate.py ../WikiSQL/data/dev.jsonl ../WikiSQL/data/dev.db  ./out.json", shell=True)
+          out_ids = []
+          for batch_id in xrange(len(swap_outputs)):
+            out_ids.append(swap_inputs[batch_id][swap_outputs[batch_id]])
+          #if data_utils.EOS_ID in outputs:
+          #  t = [m[:m.index(data_utils.EOS_ID)] for m in t] 
+          
+          for batch_id in xrange(len(swap_outputs)):
+            #print(" ".join([tf.compat.as_str(rev_fr_vocab[o]) for o in m]))
+            ft.write(" ".join([tf.compat.as_str(rev_fr_vocab[o]) for o in out_ids[batch_id].tolist()]) + "|"+ str(batch_ids[batch_id]) + '\n')
+      ft.close()
+      print("converting output...")
+      subprocess.call("python convert_to_json.py --din tmp.eval.ids --dout out.json --dsource /users1/ybsun/seq2sql/WikiSQL/annotated/dev.jsonl", shell=True)
+      print("running evaluation script...")
+      subprocess.call("python evaluate.py ../WikiSQL/data/dev.jsonl ../WikiSQL/data/dev.db  ./out.json", shell=True)
 
-        print("finish evals")
-        sys.stdout.flush()
+      print("finish evals")
+      sys.stdout.flush()
 
 
 def decode():
@@ -315,8 +334,10 @@ def decode():
     #sys.stdout.flush()
     #sentence = sys.stdin.readline()
     #while sentence:
-    with open('./wikisql_in_nmt/dev.seq') as f:
-      for l in f:
+    id_counts = 0
+    with open('./wikisql_in_nmt/dev.seq') as f, open('tmp.eval.ids.true','w') as ft:
+      lines = f.readlines()
+      for l in tqdm(lines, total = len(lines)):
        # Get token-ids for the input sentence.
        token_ids = data_utils.sentence_to_token_ids(tf.compat.as_bytes(l), en_vocab)
        token_ids.append(data_utils.EOS_ID)
@@ -331,19 +352,18 @@ def decode():
      
        # Get a 1-element batch to feed the sentence to the model.
        encoder_inputs, decoder_inputs, target_weights, target_id, sent_id = model.get_batch(
-           {bucket_id: [(token_ids, [22 for i in xrange(_buckets[bucket_id][1])], 1)]}, bucket_id)
+           {bucket_id: [(token_ids, [], 1)]}, bucket_id)
        # Get output logits for the sentence.
        _, _, output_logits = model.step(sess, encoder_inputs, decoder_inputs,
                                         target_weights, target_id, bucket_id, True)
        # This is a greedy decoder - outputs are just argmaxes of output_logits.
        outputs = [int(np.argmax(logit, axis=1)) for logit in output_logits]
        # If there is an EOS symbol in outputs, cut them at that point.
-       if data_utils.EOS_ID in outputs:
-         outputs = outputs[:outputs.index(data_utils.EOS_ID)]
+       #if data_utils.EOS_ID in outputs:
+       #  outputs = outputs[:outputs.index(data_utils.EOS_ID)]
        # Print out French sentence corresponding to outputs.
-       print(" ".join([tf.compat.as_str(rev_en_vocab[output]) for output in outputs]))
-       print("> ", end="")
-       sys.stdout.flush()
+       ft.write(" ".join([tf.compat.as_str(rev_en_vocab[int(encoder_inputs[output])]) for output in outputs])+ "|"+ str(id_counts) + '\n')
+       id_counts += 1
 
 
 def self_test():

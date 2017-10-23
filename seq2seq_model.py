@@ -27,6 +27,7 @@ import tensorflow as tf
 
 import data_utils
 import seq2seq_custom
+#import ipdb
 
 
 class Seq2SeqModel(object):
@@ -55,6 +56,7 @@ class Seq2SeqModel(object):
                batch_size,
                learning_rate,
                learning_rate_decay_factor,
+               drop_out=0.,
                use_lstm=True,
                num_samples=512,
                forward_only=False,
@@ -130,8 +132,15 @@ class Seq2SeqModel(object):
     cell = single_cell()
     if num_layers > 1:
       def mycell():
-        return tf.contrib.rnn.MultiRNNCell([single_cell() for _ in range(num_layers)])
+        mcell = tf.contrib.rnn.MultiRNNCell([single_cell() for _ in range(num_layers)])
+        if not forward_only:
+          mcell = tf.contrib.rnn.DropoutWrapper(
+                cell=mcell, input_keep_prob=(1.0 - drop_out)) 
+        return mcell
       #cell = tf.contrib.rnn.MultiRNNCell([single_cell() for _ in range(num_layers)])
+    #if not forward_only:
+    # cell = tf.contrib.rnn.DropoutWrapper(
+    #     cell=cell, input_keep_prob=(1.0 - drop_out))
 
     # The seq2seq function: we use embedding for the input and attention.
     def seq2seq_f(encoder_inputs, decoder_inputs, do_decode):
@@ -320,6 +329,11 @@ class Seq2SeqModel(object):
                             [data_utils.PAD_ID] * decoder_pad_size)
 
       batch_sent_ids.append(sent_id)
+    
+    #print(encoder_inputs[0])
+    #print(decoder_inputs[0])
+    #print(target_list[0])
+    # ipdb.set_trace()
 
       
 
