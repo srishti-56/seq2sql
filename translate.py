@@ -71,6 +71,7 @@ tf.app.flags.DEFINE_string("from_train_data", None, "Training data.")
 tf.app.flags.DEFINE_string("to_train_data", None, "Training data.")
 tf.app.flags.DEFINE_string("from_dev_data", None, "Training data.")
 tf.app.flags.DEFINE_string("to_dev_data", None, "Training data.")
+tf.app.flags.DEFINE_string("optim_method", "sgd", "optim method sgd or adam.")
 tf.app.flags.DEFINE_integer("max_train_data_size", 0,
                             "Limit on the size of training data (0: no limit).")
 tf.app.flags.DEFINE_integer("steps_per_checkpoint", 1000,
@@ -82,8 +83,12 @@ tf.app.flags.DEFINE_boolean("self_test", False,
 tf.app.flags.DEFINE_boolean("use_fp16", False,
                             "Train using fp16 instead of fp32.")
 tf.app.flags.DEFINE_string("pretrain_embs", "./data/mix_emb.pkl", "pretrained embeddings")
+tf.app.flags.DEFINE_string("gpu_ids", "2", "gpu_ids e.g. 2,3")
 
 FLAGS = tf.app.flags.FLAGS
+
+
+os.environ["CUDA_VISIBLE_DEVICES"] = FLAGS.gpu_ids
 
 # We use a number of buckets and pad to the closest one for efficiency.
 # See seq2seq_model.Seq2SeqModel for details of how they work.
@@ -147,6 +152,7 @@ def create_model(session, forward_only):
       FLAGS.batch_size,
       FLAGS.learning_rate,
       FLAGS.learning_rate_decay_factor,
+      FLAGS.optim_method,
       drop_out=FLAGS.drop_out,
       forward_only=forward_only,
       dtype=dtype)

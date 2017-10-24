@@ -735,9 +735,9 @@ def attention_decoder(decoder_inputs,
       if i == 0 and initial_state_attention:
         with variable_scope.variable_scope(
             variable_scope.get_variable_scope(), reuse=True):
-          attns, attns_logit = attention(state)
+          attns, attns_logit = attention(cell_output)
       else:
-        attns, attns_logit = attention(state)
+        attns, attns_logit = attention(cell_output)
 
       #with variable_scope.variable_scope("AttnOutputProjection"):
         #output = linear([cell_output] + attns, output_size, True)
